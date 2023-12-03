@@ -4,24 +4,34 @@
 #include <string.h>
 #include <ctype.h>
 #include"lex.yy.c"
-#include "postfix.c" /*to get postfix value of grammer */
-#include "AST2.c" /* to create AST */
+FILE *fpout;
 
 void yyerror(const char *s);
 int yylex();
 int yywrap();
-void insertType(); /*insert data type into the type array */
-void insertdef(); /*insert  class, function and attribute key words type into the type2 array */
-void addtoSymbolTable(char);  /* creating symbol table */
-int search(char* );  /* search function to check existing inside the symbol table */
-int reservedWord(char c); /*compare with reserved words */
+void insertType(); 		/*insert data type into the type array */
+void insertdef(); 		/*insert  class, function and attribute key words type into the type2 array */
+void addtoSymbolTable(char); 		 /* creating symbol table */
+int search(char* );  		/* search function to check existing inside the symbol table */
+int reservedWord(char c); 		/*compare with reserved words */
 type_checking_error(char *type1, char *type2);
 void check_declaration(char *c);
 void check_return_type(char *value1,char *value2);
 int check_types(char *type1, char *type2);
 char *get_type(char *var);
+struct node* make_node(struct node *left, struct node *right, char *token)  // to create nodes
+enum Registers { R0, R1, R2, R3 };
+int register_available[NUM_REGISTERS] = { 1, 1, 1, 1 };
+void deallocate_register(int reg);
+int allocate_register();
 
+/* intermediate code generation */
+void addQuadruple(char [],char [],char [],char []);
+void push(char*);
+char* pop();
+int temp_var=0;
 
+/*-------------------------------------- */ 
 
 /* struct to create symbol table */
 struct details{
@@ -34,17 +44,55 @@ struct details{
 
 int count=0;  
 int q;
-char type[10]; /* to store type of the data */
-char type2[20]; /* to store class, function and attribute key words */
+char type[10]; 		/* to store type of the data */
+char type2[20]; 		/* to store class, function and attribute key words */
 extern int lineNum;
-int sem_errors=0; /* get the error number */
+int sem_errors=0; 		/* get the error number */
 
-struct node *head;
+struct node *head;   /* start node of the AST  */
+
+
+/* node definition */
+struct node { 
+	struct node *left; 
+	struct node *right; 
+	char *token; 
+    };
+
+
 int label=0;
 char buff[100];
 char errors[10][100];
 char reserved[22][10] = {"int", "float", "class", "function", "if", "else", "for", "public", "return", "private","read","write",
-"id","eq","neq","lt","gt","leq","geq","or","and","void"}; /* reserved keywords*/
+"id","eq","neq","lt","gt","leq","geq","or","and","void"}; 		/* reserved keywords*/
+
+/* -------------------------------------------------- */ 
+/* structure to 3 address code  of Quadruple with one operator, two operands and one result*/
+  struct Quadruple
+  {
+    char operator[5];
+    char operand1[10];
+    char operand2[10];
+    char result[10];
+  }quad[50];
+
+
+  /* stack to 3 adress code */ 
+  struct Stack
+  {
+    char *items[10];
+    int top;
+  }stk;
+
+
+
+
+
+
+
+
+/* -------------------------------------------------- */
+
 %}
 
 
@@ -52,6 +100,18 @@ char reserved[22][10] = {"int", "float", "class", "function", "if", "else", "for
 %union {
     int iValue;                 /* integer value */
     double dValue;				/* double value */
+
+	struct nodeDef { 
+		char name[100]; 
+		struct node* nd;
+	} ndOb; 
+
+
+	struct icg { 
+			char name[100]; 
+			struct node* nd;
+			char type[5];
+		} icg1;
  
 };
 
@@ -59,16 +119,24 @@ char reserved[22][10] = {"int", "float", "class", "function", "if", "else", "for
 %token <dValue> DOUBLE
 %token <sValue> VARIABLE
 
-%token ATTRIBUTE CLASS CONTRUCTOR FLOAT FUNCTION INTEGER ISA LOCALVAR PRIVATE PUBLIC READ RETURN SELF THEN VOID WRITE WHILE IF PRINT
+%token VOID
+%token <ndOb> ATTRIBUTE CLASS CONTRUCTOR FLOAT FUNCTION INTEGER ISA LOCALVAR PRIVATE PUBLIC READ RETURN SELF THEN  WRITE WHILE IF PRINT
 %nonassoc IFX
 %nonassoc ELSE
 %nonassoc EQOP NEQ
 
+%type <ndOb> prog buildClassOrFunc classDecl idlist idEx visibilitymemberDeclTail visibility memberDecl memberFuncDecl memberVarDecl arraySizeList arraySize funcDef funcHead idsrTail funcBody localVarDeclOrStmtTail localVarDeclOrStmt localVarDecl statement assignStat statBlock statementTail expr relExpr arithExpr term factor sign variable idnestList indiceList functionCall idnest indice type returnType 
+fParams aParams fParamsTail aParamsTail assignOp relOp addOp multOp
 
-%left AND OR NOT
-%left GE LE LT GT
-%left ADDOP MINOP
-%left MULOP DIVOP
+%type <icg1> 
+
+
+%left OR
+%left AND
+%left EQ NEQ LT GT LEQ GEQ
+%left PLUS MINUS
+%left MULT DIV
+%left NOT
 %nonassoc UMINUS
 
 %type <nPtr> stmt expr stmt_list
@@ -79,97 +147,230 @@ char reserved[22][10] = {"int", "float", "class", "function", "if", "else", "for
 
 prog: buildClassOrFunc ;
 
-buildClassOrFunc : classDecl | funcDef  ; 
+buildClassOrFunc : classDecl | funcDef  ;
 
-classDecl :  CLASS ID {reservedWord($2); addtoSymbolTable("CL"); } isaidList { visibilitymemberDeclList }';' ;
-isaidList : ISA ID {reservedWord($2);} commaidList |E ;
-commaidList :, ID {reservedWord($2);} commaidLis| E ;
+classDecl :  CLASS {insertdef();}ID {reservedWord($2); addtoSymbolTable("CL"); } isaidList commaidList { visibilitymemberDeclTail }';' ;
+isaidList : ISA ID {reservedWord($2);}  | ;
+commaidList :commaidList |"," ID {reservedWord($2);} |  ;
 
+visibilitymemberDeclTail : visibilitymemberDeclTail | visibility memberDecl |  ;
+visibility: PUBLIC|PRIVATE| ;
 
-visibilitymemberDeclList :visibility memberDeclList membervisibilityList |E ;
-visibility: PUBLIC|PRIVATE|E ;
+memberDecl :memberFuncDecl | memberVarDecl | ;
+memberFuncDecl:   FUNCTION {insertdef();} ID {reservedWord($3);addtoSymbolTable("F");}: ( fParams ) arrow returnType ';' ;| constructor : ( fParams ) ';' ;
+memberVarDecl :  ATTRIBUTE {insertdef();} ID {reservedWord($3);addtoSymbolTable("A"); } :  type arraySizeList ';'; 
+arraySizeList : arraySizeList |arraySize |  ;
+arraySize : "[" INTEGER "]" | "[" "]"  ;
 
-memberDeclList: type  FUNCTION ID {reservedWord($3);addtoSymbolTable("F");}: ( fParams ) arrow returnType ;
-| constructor : ( fParams ) ;
-memberDecl : type ATTRIBUTE ID {reservedWord($2);addtoSymbolTable("A"); } :  arraySizeList ;
-
-memberFuncDecl : FUNCTION VARIABLE ":" ( fParams ) arrow returnType ';' | 	CONSTRUCTOR : ( fParams ) ';' ;
-memberVarDecl : type ATTRIBUTE VARIABLE ":"  arraySize';' ;
 
 funcDef :funcHead funcBody ;
-funcHead : FUNCTION  [[ VARIABLE sr ]] VARIABLE ( fParams ) ARROW returnType {type_checkin_error($1,$6);} | FUNCTION VARIABLE sr CONSTRUCTOR ( fParams );
-funcBody : { localVarDeclOrStmt } ;
+funcHead : FUNCTION {insertdef();}  idsrTail  id {reservedWord($4);addtoSymbolTable("F");} ( fParams ) ARROW returnType {type_checkin_error($1,$6);} | FUNCTION VARIABLE sr CONSTRUCTOR ( fParams );
+idsrTail :id sr| ;
 
-localVarDeclOrStmtList: localVarDeclOrStmt  localVarDeclOrStmtList | ;
-localVarDeclOrStmt : localVarDecl | statement ;
+funcBody : { localVarDeclOrStmtTail } ;
+localVarDeclOrStmtTail : localVarDeclOrStmtTail| localVarDeclOrStmt |  ;
 
-localVarDeclList : localVarDecl  localVarDeclList | ;
-localVarDecl : type LOCALVAR ID {reservedWord($3); addtoSymbolTable("V");}":"  arraySize ';' | type LOCALVAR VARIABLE ":"  ( aParams ) ';'  ;
+localVarDeclOrStmt : localVarDecl | statement  ;
+localVarDecl :  LOCALVAR {insertdef();} ID {reservedWord($3); addtoSymbolTable("V");}":"  type arraySizeList ';' |  LOCALVAR {insertdef();} id  {reservedWord($3); addtoSymbolTable("V");} ":" type  ( aParams ) ';'  ;
 
-statementList  : statement statementList | ;
 statement : assignStat ; 
 | IF {addtoSymbolTable("K");} ( relExpr ) THEN {addtoSymbolTable("K");} statBlock ELSE {addtoSymbolTable("K");} statBlock ; 
 | WHILE {addtoSymbolTable("K");}  ( relExpr ) statBlock ;
- | READ {addtoSymbolTable("K");} ( variable ) ;
- | WRITE {addtoSymbolTable("K");}  ( expr ) ; 
+| READ {addtoSymbolTable("K");} ( variable ) ;
+| WRITE {addtoSymbolTable("K");}  ( expr ) ; 
 | RETURN {addtoSymbolTable("K");} ( expr ) ; 
 | functionCall ;  ;
 
 
-assignStat : variable assignOp expr ; {type_checkin_error($1,$3);}
-statBlockList : statBlock statBlockList | ;
-statBlock : { statement } | statement | ;
+assignStat : variable assignOp expr ; {type_checkin_error($1,$3);   
 
-exprList : expr exprList | E;
-expr : arithExpr  relExpr |E ;
+										int i,j;
+                                        i=search($1);
+                    					j=search($3);
+                                        if(i==-1 || j==-1)
+                                        printf("\n Undefined Variable");
+                                        else
+                   						addQuadruple("=","",$3,$1);
+										fprintf(fpout,"MOV R0, %s",$3);
+	
+										} 
 
-arithExpr :term arithExprr {type_checkin_error($1,$2);};
-arithExprr :addOp term arithExprr  |E ;
+
+statBlock : { statementTail} | statement |  ; 
+statementTail : statementTail | statement |  ;
+
+
+expr : arithExpr | relExpr  ;
+relExpr : arithExpr relOp arithExpr ;  {
+	fprintf(fpout,"MOV R0, %s",$1);
+	fprintf(fpout,"ASSIG R0, %s",$3);
+}
+
+
+arithExpr :term arithExprr {type_checkin_error($1,$2);}; 
+arithExprr :addOp term arithExprr 
+{
+	
+	if(strcmp($1,"+")){
+		char str[5],str1[5]="t";
+        sprintf(str, "%d", temp_var);   
+        strcat(str1,str);
+        temp_var++;
+        addQuadruple("+",pop(),pop(),str1);                               
+        push(str1);
+
+		if($2==0){
+			fprintf(fpout,"MOV R0, %s",$2);
+
+		}
+		else{
+		fprintf(fpout,"MOV R0, %s",$2);
+		fprintf(fpout,"ADD R0, %s",$3);
+		}
+		
+		}
+
+	}
+
+	else if(strcmp($1,"-")){
+		char str[5],str1[5]="t";
+                    sprintf(str, "%d", temp_var);   
+                    strcat(str1,str);
+                    temp_var++;
+                    addQuadruple("-",pop(),pop(),str1);                               
+                    push(str1);
+					
+					if($2==0){
+					fprintf(fpout,"MOV R0, %s",$2);
+
+					}
+				else{
+				fprintf(fpout,"MOV R0, %s",$2);
+				fprintf(fpout,"MIN R0, %s",$3);
+		}
+	}
+	else{
+		char str[5],str1[5]="t";
+                    sprintf(str, "%d", temp_var);   
+                    strcat(str1,str);
+                    temp_var++;
+                    addQuadruple("or",pop(),pop(),str1);                               
+                    push(str1);
+	}
+
+ | ; 
+					
 
 sign: + | – ;
 term :factor termm ;
-termm : multOp factor termm | E ;
+termm : multOp factor termm {
+	
+	if(strcmp($1,"*")){
+		char str[5],str1[5]="t";
+        sprintf(str, "%d", temp_var);       
+		strcat(str1,str);
+        temp_var++;
+        addQuadruple("*",pop(),pop(),str1);
+        push(str1);
+		if($2==0){
+			fprintf(fpout,"MOV R0, %d",0);
 
-factorList : factor factorList |  ;
-factor : VARIABLE  | functionCall | intLtr {addtoSymbolTable("C"); } | floatLit {addtoSymbolTable("C"); } | ( arithExpr ) | NOT {addtoSymbolTable("K"); } factor | SIGN factor;
 
-variableList :variable variableList | ;
-variable : idnest VARIABLE  indice ;
+		}
+		else{
+		fprintf(fpout,"MOV R0, %s",$2);
+		fprintf(fpout,"MUL R0, %s",$3);
+		}
+	}
+	else if(strcmp($1,"/")){
+		char str[5],str1[5]="t";
+        sprintf(str, "%d", temp_var);       
 
-functionCallList : functionCall  functionCallList |  ;
-functionCall : idnest VARIABLE  ( aParams ) ;
+        strcat(str1,str);
+        temp_var++;
+        addQuadruple("/",pop(),pop(),str1);
+        push(str1);
+		fprintf(fpout,"MOV R0, %s",$2);
+		fprintf(fpout,"DIV R0, %s",$3);
+	}
+	else{
+		char str[5],str1[5]="t";
+        sprintf(str, "%d", temp_var);       
 
-idnestList : idnest idnestList |  ;
-idnest : VARIABLE  indice'.' | id {addtoSymbolTable("V"); } ( aParams ) '.'  ;
+        strcat(str1,str);
+        temp_var++;
+        addQuadruple("and",pop(),pop(),str1);
+        push(str1);
 
-indiceList : indice indiceList | ;
-indice : [ arithExpr ] ;
+	}
 
+
+}|  ;
+
+factor : VARIABLE 
+{
+	int i;
+    i=search_symbol($1);
+    if(i==-1)
+    printf("\n Undefined Variable");
+    else
+    push($1);
+	fprintf(fpout,"MOV R0, %s",$1)
+}
+ | functionCall 
+| intLtr {addtoSymbolTable("C");$$.nd=make_node(NULL,NULL,$1.name);  
+				char temp[10];
+                snprintf(temp,10,"%f",$1);   
+        		push(temp);
+				fprintf(fpout,"MOVE R0, %s",$1)}  //R0 is the register
+| floatLit {addtoSymbolTable("C"); 
+				$$.nd=make_node(NULL,NULL,$1.name);
+				char temp[10];
+                snprintf(temp,10,"%f",$1);   
+        		push(temp);
+				fprintf(fpout,"MOV R0, %s",$1) //R0 is the register
+				} 
+
+| ( arithExpr ) {fprintf(fpout,"MOV R0, %s",$1) //R0 is the register}
+
+| NOT {addtoSymbolTable("K"); } factor | SIGN factor;
+
+
+variable : idnestList ID indiceList ;
+idnestList :idnestList |idnest |  ;
+indiceList : indiceList |idice |  ;
+
+functionCall : idnestList ID  ( aParams ) ;
+
+idnestList : idnest idnestList   ;
+idnest : ID  indiceList '.' | ID {addtoSymbolTable("V"); } ( aParams ) '.'  ;
+
+indice : '[' arithExpr ']' | ;
 
 
 returnType : type | VOID ;
-type : INTEGER {insertType();}| DOUBLE {insertType();}| ID  ;
+type : INTEGER {insertType();}
+| DOUBLE {insertType();}
+| ID  { int i;
+                                        i=search($1);
+                                        if(i==-1)
+                                        printf("\n Undefined Variable");
+                    					else
+                    					push($1);};
 
 
-fParamsList  : fParams fParamsList | E;
-fParams :  VARIABLE  ':' type arraySize fParamsTail | E;
 
-aParamsList :aParams aParamsList | E ;
-aParams : expr aParamsTail | E ; 
+fParams :  ID  ':' type arraySizeList fParamsTail | ;
+aParams : expr aParamsTail | ; 
 
-fParamsTailList : fParamsTail  fParamsTailList | E;
-fParamsTail : ',' 	VARIABLE   ":" type  arraySize ;
+fParamsTail : fParamsTail| ',' ID : type arraySizeList | ;
+aParamsTail :aParamsTail| ',' expr | ;
 
-arraySizeList : arraySize arraySizeList |  ;
-arraySize : "[" INTEGER "]" | "[" "]"  ;
 
-aParamsTailList :aParamsTail        aParamsTailList | E;
-aParamsTail : ',' expr  ;
-
-assignOp : = {addtoSymbolTable("OP"); };
-relOp : EQOP {addtoSymbolTable("OP"); } |NEQ {addtoSymbolTable("OP"); } |GT {addtoSymbolTable("OP"); } |LT {addtoSymbolTable("OP"); }| LE {addtoSymbolTable("OP"); }| GE {addtoSymbolTable("OP"); }  ;
-addOp : + {addtoSymbolTable("OP"); }| – {addtoSymbolTable("OP"); }| OR {addtoSymbolTable("OP"); };
-multOp : * {addtoSymbolTable("OP"); }| / {addtoSymbolTable("OP"); } | AND {addtoSymbolTable("OP"); } ;
+assignOp : = {addtoSymbolTable("OP");$$.nd=make_node(NULL,NULL,$1.name); };
+relOp : EQOP {addtoSymbolTable("OP");$$.nd=make_node(NULL,NULL,$1.name); } |NEQ {addtoSymbolTable("OP");$$.nd=make_node(NULL,NULL,$1.name); } |GT {addtoSymbolTable("OP"); $$.nd=make_node(NULL,NULL,$1.name);} |LT {addtoSymbolTable("OP");$$.nd=make_node(NULL,NULL,$1.name); }| LE {addtoSymbolTable("OP");$$.nd=make_node(NULL,NULL,$1.name); }| GE {addtoSymbolTable("OP");$$.nd=make_node(NULL,NULL,$1.name); }  ;
+addOp : + {addtoSymbolTable("OP"); $$.nd=make_node(NULL,NULL,$1.name);}| – {addtoSymbolTable("OP");$$.nd=make_node(NULL,NULL,$1.name); }| OR {addtoSymbolTable("OP"); $$.nd=make_node(NULL,NULL,$1.name);};
+multOp : * {addtoSymbolTable("OP"); $$.nd=make_node(NULL,NULL,$1.name); }| / {addtoSymbolTable("OP"); $$.nd=make_node(NULL,NULL,$1.name);} | AND {addtoSymbolTable("OP");$$.nd=make_node(NULL,NULL,$1.name); } ;
 
 
 
@@ -183,19 +384,12 @@ void yyerror(char *s) {
 }
 
 
+FILE *yyin;
 int main(void) {
     yyparse();
-    /* to create AST */
-    char postfixExpression[] = postfixconvert();
-
-    TreeNode *root = buildExpressionTree(postfixExpression);
-
-    printf("Infix expression from the expression tree: ");
-    inorderTraversal(root);
-    printf("\n");
-
-    // Clean up by freeing allocated memory
-    freeTree(root);
+	FILE *fpInput;
+	fpout = fopen("output.c","w");
+     stk.top =-1;
    
     return 0;
 }
@@ -296,7 +490,7 @@ void check_return_type(char *value1,char *value2) {
 		return ;
 	}
 	else {
-		printf(errors[sem_errors], "Line %d: Return type mismatch\n", countn+1);
+		printf(errors[sem_errors], "Line %d: Error Return type mismatch\n", countn+1);
 		sem_errors++;
 	}
 }
@@ -348,9 +542,58 @@ char *get_type(char *var){
 int reservedWord(char c){
     for(int i=0;21>i;i++){
         if(!strcmp(reserved[i], c)){
-            printf("%s  at %d",yyerror( "a reserved key word"),symbol_table[i].lineno);
+            printf("%s  at %d",yyerror( "Error,A reserved key word has used "),symbol_table[i].lineno);
 
         }
     }
     return 0;
+}
+
+
+/* to push from stack */ 
+void push(char *str)
+{
+  Stk.top++;
+    Stk.items[Stk.top]=(char *)malloc(strlen(str)+1);
+  strcpy(Stk.items[Stk.top],str);
+}
+
+
+/* to pop in to stack */
+char * pop()
+{
+  int i;
+  if(Stk.top==-1)
+  {
+     printf("\nStack Empty!! \n");
+     exit(0);
+  }
+  char *str=(char *)malloc(strlen(Stk.items[Stk.top])+1);;
+strcpy(str,Stk.items[Stk.top]);
+  Stk.top--;
+  return(str);
+}
+
+/* function to create 3 code structure */
+void addQuadruple(char op[10],char op2[10],char op1[10],char res[10]){
+                    strcpy(QUAD[Index].operator,op);
+                    strcpy(QUAD[Index].operand2,op2);
+                    strcpy(QUAD[Index].operand1,op1);
+                    strcpy(QUAD[Index].result,res);
+                    Index++;
+}
+
+int allocate_register() {
+    for (int i = 0; i < NUM_REGISTERS; ++i) {
+        if (register_available[i]) {
+            register_available[i] = 0; // Mark as not available
+            return i; // Return the register identifier
+        }
+    }
+    // Optionally, handle no available registers
+    return -1;
+}
+
+void deallocate_register(int reg) {
+    register_available[reg] = 1; // Mark the register as available
 }
